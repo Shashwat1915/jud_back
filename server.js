@@ -1,3 +1,6 @@
+// =========================================
+// 🚀 JUDICIO BACKEND (ML + GROQ HYBRID)
+// =========================================
 import express from "express";
 import cors from "cors";
 import multer from "multer";
@@ -13,58 +16,80 @@ const app = express();
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// ✅ Initialize Groq client
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-console.log("Loaded GROQ key:", process.env.GROQ_API_KEY ? "✅ Exists" : "❌ Missing");
 
-// ✅ Multer setup for file uploads
+// ================================
+// 🔥 ML MODEL (YOUR PYTHON MODEL) 
+// ================================
+import { spawn } from "child_process";
+
+// Call python ML model to extract clauses
+function runMLModel(text) {
+  return new Promise((resolve) => {
+    const python = spawn("python", ["ml_classifier.py"]); // <- your python file
+
+    let output = "";
+    python.stdin.write(text);
+    python.stdin.end();
+
+    python.stdout.on("data", (data) => (output += data.toString()));
+    python.on("close", () => {
+      try {
+        resolve(JSON.parse(output));
+      } catch {
+        resolve({ clauses: [] });
+      }
+    });
+  });
+}
+
+// ================================
+// 📁 File Upload Setup
+// ================================
 const upload = multer({ dest: "uploads/" });
 
-// --- 🧠 Root Test Route ---
-app.get("/", (req, res) => res.send("🧠 Judicio Backend Active"));
+// ================================
+// 🧠 Test Route
+// ================================
+app.get("/", (req, res) => res.send("JUDICIO Backend Running 🚀"));
 
 
-
-// ===================================================
-// 🗣️ CHATBOT (Legal Advisor)
-// ===================================================
+// =========================================
+// 🗣️ CHATBOT
+// =========================================
 app.post("/chat", async (req, res) => {
   try {
-    console.log("🟢 /chat request received:", req.body);
-
-    const prompt = req.body.prompt || req.body.message || "Explain this legal concept simply.";
-    if (!prompt) return res.status(400).json({ text: "⚠️ Missing prompt input." });
+    const prompt = req.body.message;
 
     const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant", // ✅ Fast + reasoning capable
+      model: "llama-3.1-8b-instant",
       messages: [
-        { role: "system", content: "You are Judicio, an AI legal advisor with multilingual support." },
+        { role: "system", content: "You are Judicio, an AI legal assistant." },
         { role: "user", content: prompt },
-      ],
-      temperature: 0.7,
-      max_tokens: 1024,
+      ]
     });
 
-    const text = completion?.choices?.[0]?.message?.content?.trim() || "⚠️ No response from Judicio server.";
-    res.json({ text });
-  } catch (error) {
-    console.error("Chat error:", error);
-    res.status(500).json({ text: "⚠️ Could not connect to Judicio server.", error: error.message });
+    res.json({
+      text: completion.choices[0].message.content.trim()
+    });
+
+  } catch (err) {
+    res.json({ text: "⚠️ Could not connect to server." });
   }
 });
 
 
-
-// ===================================================
-// 📄 DOCUMENT ANALYZER (Multilingual + ML Integration)
-// ===================================================
+// =========================================
+// 📄 DOCUMENT ANALYZER (ML + LLM Hybrid)
+// =========================================
 app.post("/api/analyze-document", upload.single("document"), async (req, res) => {
   try {
     const filePath = req.file.path;
     const ext = req.file.originalname.split(".").pop().toLowerCase();
+
     let text = "";
 
-    // Extract text based on file type
+    // ---- Extract Text ----
     if (ext === "pdf") {
       const dataBuffer = fs.readFileSync(filePath);
       const data = await pdfParse(dataBuffer);
@@ -73,122 +98,101 @@ app.post("/api/analyze-document", upload.single("document"), async (req, res) =>
       const result = await mammoth.extractRawText({ path: filePath });
       text = result.value;
     } else if (ext === "txt") {
-      text = fs.readFileSync(filePath, "utf-8");
-    } else {
-      fs.unlinkSync(filePath);
-      return res.json({ summary: "⚠️ Unsupported file type." });
+      text = fs.readFileSync(filePath, "utf8");
     }
 
-    // Clean up file
-    fs.unlinkSync(filePath);
+    fs.unlinkSync(filePath); // cleanup
 
-    // Multilingual + ML-based summarization
-    const completion = await groq.chat.completions.create({
+
+    // ================================
+    // 🧠 1) RUN YOUR ML MODEL
+    // ================================
+    const mlResult = await runMLModel(text);
+    const classifiedClauses = mlResult.clauses || [];
+
+
+    // ================================
+    // 🤖 2) RUN GROQ LLM SUMMARY
+    // ================================
+    const llm = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
       messages: [
         {
           role: "system",
-          content: `
-            You are a multilingual document analysis AI.
-            - Detect the document's primary language.
-            - Summarize the document in that same language.
-            - Identify 3 key legal or business clauses if available.
-            - If the document is not legal, summarize its main content.
-          `,
+          content:
+            "You are an AI legal document analyzer. Detect language, summarize the document, and provide legal insights."
         },
-        {
-          role: "user",
-          content: text.substring(0, 8000), // avoid overload
-        },
+        { role: "user", content: text.substring(0, 7000) }
       ],
-      temperature: 0.5,
-      max_tokens: 1500,
+      temperature: 0.4
     });
 
-    const response = completion?.choices?.[0]?.message?.content?.trim() || "⚠️ No summary generated.";
-    res.json({ language: "Auto-Detected", summary: response });
-  } catch (error) {
-    console.error("Document analysis error:", error);
-    res.status(500).json({ summary: "⚠️ Could not connect to Judicio server.", error: error.message });
+    const summaryText = llm.choices[0].message.content.trim();
+
+    res.json({
+      language: "Auto-Detected",
+      summary: summaryText,
+      ml_clauses: classifiedClauses
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      summary: "⚠️ Unable to analyze document.",
+      ml_clauses: []
+    });
   }
 });
 
 
-// ===================================================
-// ⚖️ CASE PREDICTOR (with mock fallback)
-// ===================================================
+// =========================================
+// ⚖️ CASE PREDICTOR
+// =========================================
 app.post("/predict-outcome", async (req, res) => {
   try {
-    let { caseType, jurisdiction, summary } = req.body;
-
-    // Provide default mock case if none supplied
-    if (!caseType || !jurisdiction || !summary) {
-      caseType = "Breach of Contract";
-      jurisdiction = "Delhi High Court, India";
-      summary =
-        "The plaintiff alleges that the defendant failed to deliver goods as per the contract despite multiple reminders. The defendant claims force majeure due to COVID-19 lockdown.";
-    }
+    const { caseType, jurisdiction, summary } = req.body;
 
     const prompt = `
-You are Judicio, a multilingual AI legal outcome predictor.
-Analyze the following case and respond in this structure:
-
-Outcome: <Predicted verdict or resolution>
-Reasoning: <Brief explanation (2-3 sentences)>
-Confidence: <Confidence percentage>
-
 Case Type: ${caseType}
 Jurisdiction: ${jurisdiction}
-Case Summary: ${summary}
+Summary: ${summary}
+Generate:
+Outcome:
+Reasoning:
+Confidence:
     `;
 
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
       messages: [
-        {
-          role: "system",
-          content:
-            "You are Judicio, an expert AI legal advisor trained to predict outcomes based on jurisdiction and facts.",
-        },
+        { role: "system", content: "Predict legal outcomes based on facts." },
         { role: "user", content: prompt },
-      ],
-      temperature: 0.6,
-      max_tokens: 512,
+      ]
     });
 
-    const text = completion?.choices?.[0]?.message?.content?.trim() || "⚠️ No prediction generated.";
+    const text = completion.choices[0].message.content.trim();
 
-    const outcome = text.match(/Outcome[:\-]\s*(.*)/i)?.[1]?.trim() || "No clear outcome.";
-    const reasoning = text.match(/Reasoning[:\-]\s*([\s\S]*?)(?:Confidence[:\-]|$)/i)?.[1]?.trim() || "No reasoning found.";
-    const confidence = text.match(/Confidence[:\-]\s*(.*)/i)?.[1]?.trim() || "Unknown";
+    res.json({
+      outcome: text.match(/Outcome[:\-]\s*(.*)/)?.[1] || "",
+      reasoning: text.match(/Reasoning[:\-]\s*(.*)/)?.[1] || "",
+      confidence: text.match(/Confidence[:\-]\s*(.*)/)?.[1] || ""
+    });
 
-    res.json({ outcome, reasoning, confidence });
-  } catch (error) {
-    console.error("Prediction error:", error.response?.data || error.message);
-    res.status(500).json({
-      outcome: "⚠️ Could not connect to Judicio server.",
+  } catch {
+    res.json({
+      outcome: "⚠️ Server error",
       reasoning: "",
-      confidence: "",
+      confidence: ""
     });
   }
 });
-// ===================================================
-// 🕒 CASE TIMELINE (with default example)
-// ===================================================
+
+
+// =========================================
+// 🕒 TIMELINE GENERATOR
+// =========================================
 app.post("/generate-timeline", async (req, res) => {
   try {
-    let { caseFacts } = req.body;
-
-    if (!caseFacts || caseFacts.trim() === "") {
-      caseFacts = `
-15 जनवरी 2020 - वादी और प्रतिवादी के बीच सप्लाई एग्रीमेंट पर हस्ताक्षर हुए।
-10 फरवरी 2020 - माल की पहली खेप समय पर भेजी गई।
-25 मार्च 2020 - COVID-19 लॉकडाउन के कारण सप्लाई बाधित।
-15 अप्रैल 2020 - वादी ने नोटिस भेजा।
-10 मई 2020 - प्रतिवादी ने जवाब दिया कि स्थिति "force majeure" के तहत थी।
-1 जून 2020 - वादी ने अनुबंध उल्लंघन के लिए मुकदमा दायर किया।
-      `;
-    }
+    const { caseFacts } = req.body;
 
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
@@ -196,96 +200,73 @@ app.post("/generate-timeline", async (req, res) => {
         {
           role: "system",
           content:
-            "You are a multilingual AI case timeline generator. Extract all chronological events in 'Date - Event' format, translating Hindi dates/events to English if necessary.",
+            "Extract chronological legal events in 'Date - Event' format."
         },
-        { role: "user", content: caseFacts },
-      ],
-      temperature: 0.5,
-      max_tokens: 600,
+        { role: "user", content: caseFacts }
+      ]
     });
 
-    const text = completion?.choices?.[0]?.message?.content?.trim() || "⚠️ No timeline generated.";
-    const lines = text
-      .split(/\n+/)
-      .filter((line) => line.trim())
-      .map((line) => {
-        const match = line.match(/^(.*?)[–\-:]\s*(.*)$/);
-        return match
-          ? { date: match[1].trim(), event: match[2].trim() }
-          : { date: "—", event: line.trim() };
+    const lines = completion.choices[0].message.content
+      .trim()
+      .split("\n")
+      .map((l) => {
+        const [date, event] = l.split(/[-–—:]/);
+        return { date: date?.trim(), event: event?.trim() };
       });
 
-    res.json(lines.length ? lines : [{ date: "—", event: text }]);
-  } catch (error) {
-    console.error("Timeline generation error:", error);
-    res.status(500).json([{ date: "Error", event: "⚠️ Could not generate timeline." }]);
+    res.json(lines);
+
+  } catch {
+    res.json([{ date: "Error", event: "Timeline generation failed" }]);
   }
 });
 
-// ===================================================
-// ⚔️ ARGUMENT STRATEGIST (with mock case)
-// ===================================================
+
+// =========================================
+// ⚔️ ARGUMENT STRATEGY
+// =========================================
 app.post("/generate-arguments", async (req, res) => {
   try {
-    let { coreArgument, argumentType } = req.body;
-
-    if (!coreArgument) {
-      coreArgument =
-        "The defendant claims that due to the COVID-19 lockdown, the non-delivery of goods falls under the force majeure clause.";
-      argumentType = "for";
-    }
+    const { coreArgument, argumentType } = req.body;
 
     const prompt = `
-You are Judicio, a multilingual AI legal strategist.
-Generate 3 structured legal arguments ${
-      argumentType === "against" ? "against" : "in favor of"
-    } the following statement.
-For each argument, include:
-
-Argument: <Title>
-Analysis: <Brief reasoning>
-Strategy: <Counter or suggested approach>
-
-Statement: ${coreArgument}
-`;
+Generate 3 legal arguments ${argumentType} the statement:
+${coreArgument}
+Format:
+Argument:
+Analysis:
+Strategy:
+    `;
 
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
       messages: [
-        { role: "system", content: "You are Judicio, an AI legal strategist with multilingual reasoning." },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.7,
-      max_tokens: 800,
+        { role: "system", content: "You generate legal arguments." },
+        { role: "user", content: prompt }
+      ]
     });
 
-    const response = completion?.choices?.[0]?.message?.content?.trim() || "⚠️ No arguments generated.";
+    const blocks = completion.choices[0].message.content
+      .split("Argument:")
+      .slice(1)
+      .map((b) => ({
+        argument: b.split("Analysis:")[0].trim(),
+        analysis: b.split("Analysis:")[1]?.split("Strategy:")[0]?.trim(),
+        strategy: b.split("Strategy:")[1]?.trim()
+      }));
 
-    const argumentBlocks = response
-      .split(/Argument[:\-]/i)
-      .filter((b) => b.trim())
-      .map((block) => {
-        const analysisMatch = block.match(/Analysis[:\-]\s*([\s\S]*?)(Strategy[:\-]|$)/i);
-        const strategyMatch = block.match(/Strategy[:\-]\s*([\s\S]*)/i);
-        const title = block.split("\n")[0].trim();
-        return {
-          argument: title || "Untitled Argument",
-          analysis: analysisMatch ? analysisMatch[1].trim() : "No analysis provided.",
-          response: strategyMatch ? strategyMatch[1].trim() : "No strategy provided.",
-        };
-      });
+    res.json(blocks);
 
-    res.json(argumentBlocks);
-  } catch (error) {
-    console.error("Argument generation error:", error.response?.data || error.message);
-    res.status(500).json([{ argument: "⚠️ Could not connect to Judicio server." }]);
+  } catch {
+    res.json([{ argument: "⚠️ Server unreachable" }]);
   }
 });
 
 
-
-// ===================================================
-// 🚀 Start Server
-// ===================================================
+// =========================================
+// 🚀 START SERVER
+// =========================================
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Judicio backend running at http://localhost:${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 JUDICIO backend running on http://localhost:${PORT}`)
+);
